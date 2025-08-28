@@ -7,7 +7,7 @@
 <p align="center">
   一个部署在 Cloudflare Workers 上的轻量级代理订阅生成器。
   <br />
-  将单个节点信息，一键生成为 Clash、Shadowrocket 客户端兼容的完整订阅，支持 API 传参和 Web 界面。
+  将单个节点信息，一键生成为 Clash、Shadowrocket 客户端兼容的完整订阅，支持 Web UI 界面 + API 参数化调用。
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 
 -   **多模式使用**：Web UI 界面 + API 参数化调用
 -   **一键导入**：自动唤起客户端导入配置
--   **动态配置**：API 使用场景，例如在Excel或多维表格等应用中通过公式拼接到本项目 API，一键订阅
+-   **动态配置**：API 传参可以结合其他自动化使用，例如在Excel或多维表格等应用中通过公式拼接到本项目 API，一键订阅。
 -   **智能旗标**：自动识别地区并添加旗帜标识
 -   **零成本部署**：基于 Cloudflare Workers
 

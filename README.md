@@ -1,8 +1,6 @@
-# sub-gen-worker
+<div align="center">
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Cranberrycrisp/sub-gen-worker/refs/heads/main/img/index.jpg" alt="Web UI Screenshot" width="600"/>
-</p>
+# 🔁 sub-gen-worker 
 
 <p align="center">
   一个部署在 Cloudflare Workers 上的轻量级代理订阅生成器。
@@ -10,11 +8,16 @@
   将单个节点信息，一键生成为 Clash、Shadowrocket 客户端兼容的完整订阅，支持 Web UI 界面 + API 参数化调用。
 </p>
 
-<p align="center">
-  <!-- 可以添加一些徽章增加专业感 -->
-  <a href="https://github.com/Cranberrycrisp/sub-gen-worker/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Cranberrycrisp/sub-gen-worker?style=flat-square" alt="License"></a>
-  <a href="https://github.com/Cranberrycrisp/sub-gen-worker"><img src="https://img.shields.io/github/stars/Cranberrycrisp/sub-gen-worker?style=flat-square" alt="Stars"></a>
-</p>
+</div>
+
+<div align="center">
+
+![功能](https://img.shields.io/badge/功能-订阅转换-blue)![语言](https://img.shields.io/badge/JavaScript-ES6+-f7df1e)![环境](https://img.shields.io/badge/环境-Cloudflare_Workers-f38020)![协议](https://img.shields.io/github/license/Cranberrycrisp/sub-gen-worker)
+
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Cranberrycrisp/sub-gen-worker)
+
+</div>
+
 
 ## 特性
 

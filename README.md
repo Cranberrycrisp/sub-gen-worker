@@ -1,6 +1,8 @@
 # sub-gen-worker
 
-
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Cranberrycrisp/sub-gen-worker/refs/heads/main/img/index.jpg" alt="Web UI Screenshot" width="600"/>
+</p>
 
 <p align="center">
   一个部署在 Cloudflare Workers 上的轻量级代理订阅生成器。

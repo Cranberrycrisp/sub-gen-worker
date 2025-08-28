@@ -1,29 +1,43 @@
 # sub-gen-worker
 
-一个部署在 Cloudflare Workers 上的轻量级代理订阅生成器。它能将单个代理节点信息转换为与 Clash 和 Shadowrocket 客户端兼容的完整订阅配置文件，支持 API 传参和 Web 界面。
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Cranberrycrisp/sub-gen-worker/refs/heads/main/img/index.jpg" alt="Web UI Screenshot" width="600"/>
+</p>
 
+<p align="center">
+  一个部署在 Cloudflare Workers 上的轻量级代理订阅生成器。
+  <br />
+  将单个节点信息，一键生成为 Clash、Shadowrocket 客户端兼容的完整订阅，支持 API 传参和 Web 界面。
+</p>
+
+<p align="center">
+  <!-- 可以添加一些徽章增加专业感 -->
+  <a href="https://github.com/Cranberrycrisp/sub-gen-worker/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Cranberrycrisp/sub-gen-worker?style=flat-square" alt="License"></a>
+  <a href="https://github.com/Cranberrycrisp/sub-gen-worker"><img src="https://img.shields.io/github/stars/Cranberrycrisp/sub-gen-worker?style=flat-square" alt="Stars"></a>
+</p>
 
 ## 特性
 
--   **多模式使用**：支持通过 Web UI 手动配置，或通过 API 参数化调用。API 使用场景例如在Excel或多维表格等应用中通过公式拼接到本项目 API，一键订阅。
--   **一键导入**：通过 URL Scheme 直接唤起客户端并导入配置。
--   **动态配置**：基于单个节点信息生成包含代理组和基础规则的完整 YAML 文件。
--   **智能旗标**：自动识别节点名称中的地区关键词并添加对应的国家/地区旗帜。
--   **无服务器部署**：完全运行在 Cloudflare 的全球网络上，免费且无需独立服务器。
+-   **多模式使用**：Web UI 界面 + API 参数化调用
+-   **一键导入**：自动唤起客户端导入配置
+-   **动态配置**：API 使用场景，例如在Excel或多维表格等应用中通过公式拼接到本项目 API，一键订阅
+-   **智能旗标**：自动识别地区并添加旗帜标识
+-   **零成本部署**：基于 Cloudflare Workers
 
 
 
 ## 部署
 
-1.  登录 Cloudflare 控制台，进入 **Workers & Pages**。
-2.  **创建应用程序** > **创建 Worker**。
-3.  命名 Worker（例如 `sub-gen`）并点击 **部署**。
-4.  部署完成后，点击 **编辑代码**。
-5.  将仓库中的 `index.js` 代码完整粘贴至编辑器。
-6.  点击 **保存并部署**。
+### 方式一：一键部署
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Cranberrycrisp/sub-gen-worker) 
 
-部署完成后，即可通过 `https://<worker-name>.<subdomain>.workers.dev` 访问。
-可以添加自定义域名防止Worker被墙。
+### 方式二：手动部署
+1. 登录 Cloudflare 控制台 → Workers & Pages
+2. 创建 Worker → 编辑代码
+3. 粘贴 `index.js` 内容 → 保存并部署
+
+> 部署完成后，即可通过 `https://<worker-name>.<subdomain>.workers.dev` 访问。
+> 为防止 `workers.dev` 域名被墙，建议在 Cloudflare 上为 Worker 添加自定义域名。
 
 ## 使用方式
 
@@ -31,16 +45,15 @@
 
 ### 1. Web UI 模式
 
-直接在浏览器中访问您部署的 Worker URL。
+直接在浏览器中访问您部署的 Worker URL。该界面提供了一个交互式表单，填写节点信息后，点击对应按钮即可生成配置并导入客户端。
 
-该界面提供了一个交互式表单，用于填写代理节点信息。填写完毕后，点击 “导入到 Clash” 或 “导入到 Shadowrocket” 按钮，即可自动生成配置并尝试唤起相应的客户端。
 
 ![Web UI Screenshot](https://raw.githubusercontent.com/Cranberrycrisp/sub-gen-worker/refs/heads/main/img/index.jpg)
 
 
 ### 2. API 调用模式
 
-该模式允许通过构造特定的 URL 来实现自动化和集成。访问此 URL 将直接触发配置生成和客户端导入流程。
+通过构造特定的 URL 参数，可直接生成配置并触发客户端导入。
 
 ![API UI Screenshot](https://raw.githubusercontent.com/Cranberrycrisp/sub-gen-worker/refs/heads/main/img/index-api.jpg)
 
@@ -49,29 +62,29 @@
 
 ```
 https://<Your-Worker-URL>/?<parameters>
-https://sub-gen.example.workers.dev/?name=香港节点-01&server=1.2.3.4&port=1080&username=user&password=pass
 ```
 
 #### 请求参数
 
-| 参数       | 类型     | 描述                 | 示例            |
-| :--------- | :------- | :------------------- | :-------------- |
-| `name`     | `string` | **必需**, 节点名称     | `香港节点-01`   |
-| `server`   | `string` | **必需**, 服务器地址   | `1.2.3.4`       |
-| `port`     | `number` | **必需**, 端口         | `1080`          |
-| `type`     | `string` | 协议类型 (`socks5`)  | `socks5`        |
-| `username` | `string` | 用户名（可选）       | `user`          |
-| `password` | `string` | 密码（可选）         | `pass`          |
+
+| 参数 | 类型 | 必需 | 描述 | 示例 |
+| :--- | :--- | :--- | :--- | :--- |
+| `name` | `string` | **是** | 节点名称 | `香港节点-01` |
+| `server` | `string` | **是** | 服务器地址 | `1.2.3.4` |
+| `port` | `number` | **是** | 端口 | `1080` |
+| `type` | `string` | 否 | 协议类型 (默认 `socks5`) | `socks5` |
+| `username` | `string` | 否 | 用户名 (可选) | `user` |
+| `password` | `string` | 否 | 密码 (可选) | `pass` |
+
 
 #### 调用示例
 
-构造一个包含所有必要参数的 URL：
 
 ```
 https://sub-gen.flyrr.cc/?server=1.2.3.4&port=1080&username=user&password=pass&name=香港节点-01
 ```
 
-直接在浏览器中访问此 URL，将自动填充表单并尝试为 Clash 客户端导入配置，适合用于快捷方式或脚本集成。
+可编辑 `index.js` 文件中的 `clashTemplate` 变量，自定义默认的代理组 (`proxy-groups`) 和分流规则 (`rules`)。
 
 ## 技术实现
 

@@ -563,7 +563,7 @@ function handleUIPageRequest(request) {
     <div class="container">
         <div class="header">
             <h1>🚀 通用代理订阅生成器</h1>
-            <p>Clash 和 Shadowrocket 客户端一键导入，支持中转链式代理</p>
+            <p>一键导入 Clash 和 Shadowrocket 客户端，支持中转链式代理</p>
         </div>
         
         <div id="result"></div>

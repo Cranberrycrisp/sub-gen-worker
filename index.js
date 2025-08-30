@@ -1,7 +1,7 @@
 /**
  * Universal Subscription Generator for Clash & Shadowrocket
  * Author: flyrr
- * Version: 3.0 - Fixed const assignment error & Unified Shadowrocket to use subscribe method
+ * Version: 4.0 - Added Proxy Chaining (Transit Node) functionality
  */
 export default {
     async fetch(request, env, ctx) {
@@ -17,24 +17,40 @@ export default {
 };
 
 /**
- * API: 生成 Clash 的 YAML 配置文件
+ * 后端 API: 生成 Clash 的 YAML 配置文件
+ * - 支持单节点配置
+ * - 支持中转+落地链式代理配置
  * @param {Request} request
  */
-function handleClashConfigRequest(request) {
+async function handleClashConfigRequest(request) {
     const {searchParams} = new URL(request.url);
-    // 将 const 改为 let，以允许后续的国旗添加操作
-    let name = decodeURIComponent(searchParams.get('name') || 'MyProxy');
-    const server = searchParams.get('server');
-    const port = searchParams.get('port');
-    const username = decodeURIComponent(searchParams.get('username') || '');
-    const password = decodeURIComponent(searchParams.get('password') || '');
-    const type = searchParams.get('type') || 'socks5';
 
-    if (!server || !port) {
-        return new Response('Error: "server" & "port" are required.', {status: 400});
+    // --- 落地节点参数 (必须) ---
+    // 将 const 改为 let，以允许后续的国旗添加操作
+    let landingName = decodeURIComponent(searchParams.get('name') || '落地节点');
+    const landingServer = searchParams.get('server');
+    const landingPort = searchParams.get('port');
+    const landingUsername = decodeURIComponent(searchParams.get('username') || '');
+    const landingPassword = decodeURIComponent(searchParams.get('password') || '');
+    const landingType = searchParams.get('type') || 'socks5';
+
+    // --- 中转节点参数 (可选) ---
+    let transitName = decodeURIComponent(searchParams.get('transit_name') || '中转节点');
+    const transitServer = searchParams.get('transit_server');
+    const transitPort = searchParams.get('transit_port');
+    const transitPassword = decodeURIComponent(searchParams.get('transit_password') || '');
+    const transitType = searchParams.get('transit_type') || 'hysteria2';
+    const transitSni = searchParams.get('transit_sni') || 'cn.bing.com';
+    const transitSkipCertVerify = searchParams.get('transit_skip_cert_verify') === 'true'; // 必须转为布尔值
+    const transitAlpn = searchParams.get('transit_alpn') || 'h3';
+
+    // 基础验证
+    if (!landingServer || !landingPort) {
+        return new Response('Error: Landing node "server" & "port" are required.', {status: 400});
     }
 
-    // 🎌 为确保直接链接也能生成国旗，在后端同样添加国旗处理逻辑
+    // --- 辅助函数 ---
+    // 国旗映射表
     const FLAG_MAP = {
         // 亚洲
         '香港|港|HK|Hong Kong': '🇭🇰', '台湾|台|TW|Taiwan': '🇹🇼', '日本|日|JP|Japan': '🇯🇵',
@@ -58,7 +74,7 @@ function handleClashConfigRequest(request) {
         // 中东
         '阿联酋|UAE|迪拜|Dubai': '🇦🇪', '沙特|SA|Saudi': '🇸🇦', '以色列|IL|Israel': '🇮🇱',
     };
-
+    // 国旗添加逻辑
     const addFlagToNodeName = (nodeName) => {
         if (!nodeName || typeof nodeName !== 'string') return nodeName;
         // 检查是否已经包含国旗 emoji
@@ -74,73 +90,190 @@ function handleClashConfigRequest(request) {
         return nodeName; // 未匹配到国旗，返回原名称
     };
 
-    // 对从URL参数获取的节点名称进行国旗处理
-    name = addFlagToNodeName(name);
+    // 对节点名称进行国旗处理
+    landingName = addFlagToNodeName(landingName);
+    transitName = addFlagToNodeName(transitName);
 
-
-    // 增强的YAML字符串转义函数
     const escapeYamlString = (str) => {
-        if (!str) return '';
-        // 如果包含特殊字符、中文或国旗，用双引号包围并转义
-        const needsQuotes = /[:\[\]{}#&*!|>'"%@`\n\r\t]|\uD83C[\uDDE6-\uDDFF]/u.test(str) || /^[\d\-+.]/.test(str) || /^\s|\s$/.test(str) || /[\u4e00-\u9fff]/.test(str);
+        if (str === null || str === undefined) return '';
+        // 确保布尔值和数字不被引用
+        if (typeof str === 'boolean' || typeof str === 'number') return str.toString();
+
+        const needsQuotes = /[:\[\]{}#&*!|>'"%@`\n\r\t]|\uD83C[\uDDE6-\uDDFF]/u.test(str) || /^\s|\s$/.test(str) || /[\u4e00-\u9fff]/.test(str);
         if (needsQuotes) {
             return `"${str.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
         }
         return str;
     };
 
-    // 构建代理节点配置
-    let proxyNode = `
-  - name: ${escapeYamlString(name)}
-    type: ${type}
-    server: ${server}
-    port: ${parseInt(port)}`;
+    // --- 核心逻辑: 根据是否提供中转节点参数，生成不同配置 ---
 
-    if (username && username.trim()) {
-        proxyNode += `
-    username: ${escapeYamlString(username)}`;
-    }
-    if (password && password.trim()) {
-        proxyNode += `
-    password: ${escapeYamlString(password)}`;
-    }
-    if (type === 'socks5') {
-        proxyNode += `
+    let clashConfig;
+    const useTransit = transitServer && transitPort;
+
+    if (useTransit) {
+        // --- 生成链式代理 (中转 + 落地) 配置 ---
+
+        // 1. 构建中转节点
+        let transitProxy = `
+  - name: ${escapeYamlString(transitName)}
+    type: ${transitType}
+    server: ${transitServer}
+    port: ${parseInt(transitPort)}
+    password: ${escapeYamlString(transitPassword)}
+    sni: ${escapeYamlString(transitSni)}
+    skip-cert-verify: ${transitSkipCertVerify}
+    alpn:
+      - ${transitAlpn}`;
+
+        // 2. 构建落地节点，并使用 dialer-proxy 指向中转
+        let landingProxy = `
+  - name: ${escapeYamlString(landingName)}
+    type: ${landingType}
+    server: ${landingServer}
+    port: ${parseInt(landingPort)}`;
+        if (landingUsername) landingProxy += `
+    username: ${escapeYamlString(landingUsername)}`;
+        if (landingPassword) landingProxy += `
+    password: ${escapeYamlString(landingPassword)}`;
+        if (landingType === 'socks5') landingProxy += `
     udp: true`;
-    }
+        // 关键：指定拨号代理
+        landingProxy += `
+    dialer-proxy: ${escapeYamlString(transitName)}`;
 
-    const clashConfig = `proxies:${proxyNode}
+        // 3. 组合成完整的 YAML，添加 Shadowrocket 链式代理说明
+        clashConfig = `
+# 🔗 链式代理配置 (中转 + 落地)
+# ✅ Clash: 自动链式代理 (中转 → 落地)
+# 📱 Shadowrocket: 需要手动设置 (见下方说明)
+
+# 代理服务器列表
+proxies:${transitProxy}${landingProxy}
+
+# 代理组配置
+proxy-groups:
+  # 最终代理模式组
+  - name: "🚀 代理模式"
+    type: select
+    proxies:
+      - "♻️ 落地节点-自动"
+      - "🔰 落地节点-手动"
+      - DIRECT
+
+  # 组A: 中转节点选择组
+  - name: "中转节点"
+    type: select
+    proxies:
+      - ${escapeYamlString(transitName)}
+      - DIRECT
+
+  # 组B: 落地节点 - 手动选择模式
+  - name: "🔰 落地节点-手动"
+    type: select
+    proxies:
+      - ${escapeYamlString(landingName)}
+
+  # 组C: 落地节点 - 自动选择模式
+  - name: "♻️ 落地节点-自动"
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    proxies:
+      - ${escapeYamlString(landingName)}
+
+# 规则配置
+rules:
+  - MATCH,🚀 代理模式
+
+# ==================== Shadowrocket 链式代理设置说明 ====================
+# 📱 Shadowrocket 用户请按以下步骤手动设置链式代理：
+# 
+# 🔥 重要提示：Shadowrocket 配置文件无法自动实现链式代理
+# 需要在客户端中手动配置"代理通过"功能
+#
+# 📋 设置步骤：
+# 1️⃣ 导入此配置文件到 Shadowrocket
+# 2️⃣ 你会看到两个独立节点：
+#     • ${transitName} (中转节点)
+#     • ${landingName} (落地节点)
+# 
+# 3️⃣ 设置链式代理：
+#     • 点击落地节点 "${landingName}"
+#     • 滑动到底部找到"代理通过"选项
+#     • 选择 "${transitName}" 作为上游代理
+#     • 点击"完成"保存设置
+# 
+# 4️⃣ 使用链式代理：
+#     • 在主界面选择 "${landingName}" 节点
+#     • 流量路径：设备 → ${transitName} → ${landingName} → 目标网站
+# 
+# 💡 提示：Clash 用户无需手动设置，配置文件已自动实现链式代理
+`;
+
+    } else {
+        // --- 生成单节点配置 (保持原有逻辑) ---
+        let proxyNode = `
+  - name: ${escapeYamlString(landingName)}
+    type: ${landingType}
+    server: ${landingServer}
+    port: ${parseInt(landingPort)}`;
+
+        if (landingUsername) {
+            proxyNode += `
+    username: ${escapeYamlString(landingUsername)}`;
+        }
+        if (landingPassword) {
+            proxyNode += `
+    password: ${escapeYamlString(landingPassword)}`;
+        }
+        if (landingType === 'socks5') {
+            proxyNode += `
+    udp: true`;
+        }
+
+        clashConfig = `proxies:${proxyNode}
 
 proxy-groups:
   - name: "🚀 节点选择"
     type: select
     proxies:
-      - ${escapeYamlString(name)}
+      - ${escapeYamlString(landingName)}
       - DIRECT
 
 rules:
   - MATCH,🚀 节点选择
 `;
+    }
 
-    // 使用处理过的 name 生成文件名
+    // 最终返回响应
+    // 使用落地节点名或"中转配置"作为文件名
+    const finalName = useTransit ? `${transitName} - ${landingName}` : landingName;
     return new Response(clashConfig, {
         headers: {
             'Content-Type': 'text/yaml; charset=utf-8',
-            // Content-Disposition，同时支持ASCII和UTF-8文件名
-            'Content-Disposition': `attachment; filename="config.yaml"; filename*=UTF-8''${encodeURIComponent(name + '.yaml')}`
+            'Content-Disposition': `attachment; filename="config.yaml"; filename*=UTF-8''${encodeURIComponent(finalName + '.yaml')}`
         },
     });
 }
 
 
 /**
- * UI: 显示主界面，处理手动和自动生成逻辑
+ * UI: 显示主界面，增加中转节点配置区域
  * @param {Request} request
  */
 function handleUIPageRequest(request) {
     const {origin, searchParams} = new URL(request.url);
 
-    // 从 URL 参数预填充表单 - 正确处理 URL 解码
+    // HTML 转义函数
+    const escapeHtml = (str) => {
+        if (!str) return '';
+        return str
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+    };
+
+    // 从 URL 参数预填充表单
     const prefill = {
         name: decodeURIComponent(searchParams.get('name') || ''),
         type: searchParams.get('type') || 'socks5',
@@ -148,8 +281,19 @@ function handleUIPageRequest(request) {
         port: searchParams.get('port') || '',
         username: decodeURIComponent(searchParams.get('username') || ''),
         password: decodeURIComponent(searchParams.get('password') || ''),
+        // 中转节点预填充
+        transit_name: decodeURIComponent(searchParams.get('transit_name') || '中转节点'),
+        transit_type: searchParams.get('transit_type') || 'hysteria2',
+        transit_server: searchParams.get('transit_server') || '',
+        transit_port: searchParams.get('transit_port') || '',
+        transit_password: decodeURIComponent(searchParams.get('transit_password') || ''),
+        transit_sni: searchParams.get('transit_sni') || 'cn.bing.com',
+        transit_skip_cert_verify: searchParams.get('transit_skip_cert_verify') !== 'false', // 默认 true
+        transit_alpn: searchParams.get('transit_alpn') || 'h3',
+        use_transit: !!searchParams.get('transit_server'), // 根据URL参数决定是否勾选
     };
 
+    // 自动触发逻辑
     let autoTriggerScript = '';
     // 如果 URL 提供了必要参数，则生成自动触发脚本（默认触发Clash）
     if (prefill.server && prefill.port) {
@@ -175,17 +319,6 @@ function handleUIPageRequest(request) {
       }, 500);
     `;
     }
-
-    // HTML 转义函数
-    const escapeHtml = (str) => {
-        if (!str) return '';
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#x27;');
-    };
 
     const html = `
 <!DOCTYPE html>
@@ -387,25 +520,122 @@ function handleUIPageRequest(request) {
                 grid-template-columns: 1fr;
             }
         }
+        /* 新增样式 */
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #333;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e1e8ed;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .section-title:first-of-type {
+            margin-top: 0;
+        }
+        .sub-field {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        #transit-fields {
+            transition: all 0.4s ease-in-out;
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+        }
+        #transit-fields.active {
+            max-height: 1000px; /* 一个足够大的值 */
+            opacity: 1;
+        }
+        .toggle-switch { display: inline-flex; align-items: center; cursor: pointer; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .slider { width: 44px; height: 24px; background-color: #ccc; border-radius: 24px; position: relative; transition: .4s; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: .4s; }
+        input:checked + .slider { background-color: #667eea; }
+        input:checked + .slider:before { transform: translateX(20px); }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🚀 通用代理订阅生成器</h1>
-            <p>支持 Clash 和 Shadowrocket 客户端一键导入</p>
+            <p>Clash 和 Shadowrocket 客户端一键导入，支持中转链式代理</p>
         </div>
         
         <div id="result"></div>
         
         <form id="proxy-form">
-            <div class="form-group">
-                <label for="name">节点名称:</label>
-                <input type="text" id="name" placeholder="支持中文节点名称，如：香港节点" value="${escapeHtml(prefill.name || '我的代理节点')}">
+            <!-- 中转节点配置区域 -->
+            <div class="section-title">
+                <span>1. 中转节点 (跳板机)</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="use-transit-toggle" ${prefill.use_transit ? 'checked' : ''}>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div id="transit-fields" class="${prefill.use_transit ? 'active' : ''}">
+                <div class="form-group">
+                    <label for="transit_name">中转名称:</label>
+                    <input type="text" id="transit_name" placeholder="如：香港BGP中转" value="${escapeHtml(prefill.transit_name)}">
+                </div>
+                <div class="sub-field">
+                    <div class="form-group">
+                        <label for="transit_type">中转协议:</label>
+                        <select id="transit_type">
+                            <option value="hysteria2" ${prefill.transit_type === 'hysteria2' ? 'selected' : ''}>Hysteria2</option>
+                            <option value="socks5" ${prefill.transit_type === 'socks5' ? 'selected' : ''}>SOCKS5</option>
+                             <option value="http" ${prefill.transit_type === 'http' ? 'selected' : ''}>HTTP</option>
+                        </select>
+                    </div>
+                     <div class="form-group">
+                        <label for="transit_port" class="required">中转端口:</label>
+                        <input type="number" id="transit_port" placeholder="1-65535" value="${escapeHtml(prefill.transit_port)}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="transit_server" class="required">中转服务器:</label>
+                    <input type="text" id="transit_server" placeholder="IP 地址或域名" value="${escapeHtml(prefill.transit_server)}">
+                </div>
+                <div class="form-group">
+                    <label for="transit_password">中转密码/密钥:</label>
+                    <input type="text" id="transit_password" placeholder="Hysteria2的password" value="${escapeHtml(prefill.transit_password)}">
+                </div>
+                <p style="font-size: 13px; color: #666;">Hysteria2 专用参数:</p>
+                <div class="sub-field">
+                    <div class="form-group">
+                        <label for="transit_sni">SNI:</label>
+                        <input type="text" id="transit_sni" value="${escapeHtml(prefill.transit_sni)}">
+                    </div>
+                    <div class="form-group">
+                        <label for="transit_alpn">ALPN:</label>
+                        <input type="text" id="transit_alpn" value="${escapeHtml(prefill.transit_alpn)}">
+                    </div>
+                </div>
+                 <div class="form-group">
+                    <label style="display:inline-flex; align-items:center;">
+                        <input type="checkbox" id="transit_skip_cert_verify" style="width:auto; margin-right: 8px;" ${prefill.transit_skip_cert_verify ? 'checked' : ''}>
+                        跳过证书验证 (skip-cert-verify)
+                    </label>
+                </div>
+            </div>
+
+             <!-- 落地节点配置区域 -->
+            <div class="section-title">
+                <span>2. 落地节点 (出口)</span>
             </div>
             
             <div class="form-group">
-                <label for="type">代理协议:</label>
+                <label for="name">落地名称:</label>
+                <input type="text" id="name" placeholder="如：澳洲落地节点" value="${escapeHtml(prefill.name || '落地节点')}">
+            </div>
+            
+            <div class="form-group">
+                <label for="type">落地协议:</label>
                 <select id="type">
                     <option value="socks5" ${prefill.type === 'socks5' ? 'selected' : ''}>SOCKS5</option>
                     <!-- 未来可扩展: http, ss, vmess, trojan 等 -->
@@ -414,26 +644,26 @@ function handleUIPageRequest(request) {
             </div>
 
             <div class="form-group">
-                <label for="server" class="required">服务器地址:</label>
+                <label for="server" class="required">落地服务器:</label>
                 <input type="text" id="server" placeholder="IP 地址或域名" value="${escapeHtml(prefill.server)}" required>
             </div>
 
             <div class="form-group">
-                <label for="port" class="required">端口:</label>
+                <label for="port" class="required">落地端口:</label>
                 <input type="number" id="port" placeholder="1-65535" min="1" max="65535" value="${escapeHtml(prefill.port)}" required>
             </div>
 
             <div class="form-group">
-                <label for="username">用户名:</label>
-                <input type="text" id="username" placeholder="可选，支持中文用户名" value="${escapeHtml(prefill.username)}">
+                <label for="username">落地用户名:</label>
+                <input type="text" id="username" placeholder="可选" value="${escapeHtml(prefill.username)}">
             </div>
 
             <div class="form-group">
-                <label for="password">密码:</label>
+                <label for="password">落地密码:</label>
                 <input type="password" id="password" placeholder="可选" value="${escapeHtml(prefill.password)}">
             </div>
 
-            <div class="button-group">
+            <div class="button-group" style="margin-top:40px;">
                 <button type="button" class="btn btn-clash" onclick="importTo('clash')">
                     😺 导入到 Clash 🐾
                 </button>
@@ -445,6 +675,56 @@ function handleUIPageRequest(request) {
     </div>
 
     <script>
+        // --- 切换中转配置区域的显示 ---
+        const transitToggle = document.getElementById('use-transit-toggle');
+        const transitFields = document.getElementById('transit-fields');
+        transitToggle.addEventListener('change', () => {
+            transitFields.classList.toggle('active', transitToggle.checked);
+        });
+
+        const getFormValues = () => {
+            const useTransit = document.getElementById('use-transit-toggle').checked;
+            
+            const values = {
+                // 落地节点
+                name: document.getElementById('name').value.trim() || '落地节点',
+                type: document.getElementById('type').value.trim(),
+                server: document.getElementById('server').value.trim(),
+                port: document.getElementById('port').value.trim(),
+                username: document.getElementById('username').value.trim(),
+                password: document.getElementById('password').value.trim(),
+            };
+
+            if (useTransit) {
+                // 如果启用中转，则收集中转节点信息
+                Object.assign(values, {
+                    transit_name: document.getElementById('transit_name').value.trim() || '中转节点',
+                    transit_type: document.getElementById('transit_type').value.trim(),
+                    transit_server: document.getElementById('transit_server').value.trim(),
+                    transit_port: document.getElementById('transit_port').value.trim(),
+                    transit_password: document.getElementById('transit_password').value.trim(),
+                    transit_sni: document.getElementById('transit_sni').value.trim(),
+                    transit_skip_cert_verify: document.getElementById('transit_skip_cert_verify').checked,
+                    transit_alpn: document.getElementById('transit_alpn').value.trim(),
+                });
+            }
+            
+            return values;
+        };
+
+        const validateForm = (values) => {
+            // 基础验证：落地节点必须有
+            if (!values.server || !values.port) {
+                showMessage('⚠️ 落地节点的服务器和端口是必填项！', 'error'); return false;
+            }
+
+            // 中转验证：如果启用中转，中转节点也必须有服务器和端口
+            if (document.getElementById('use-transit-toggle').checked && (!values.transit_server || !values.transit_port)) {
+                 showMessage('⚠️ 启用中转时，中转节点的服务器和端口是必填项！', 'error'); return false;
+            }
+
+            return true;
+        }
         // 国旗映射表 - 根据关键词匹配国旗
         const FLAG_MAP = {
             // 亚洲
@@ -529,20 +809,13 @@ function handleUIPageRequest(request) {
             return nodeName; // 未匹配到国旗，返回原名称
         };
         
-        const getFormValues = () => ({
-            name: document.getElementById('name').value.trim() || '代理节点',
-            type: document.getElementById('type').value.trim(),
-            server: document.getElementById('server').value.trim(),
-            port: document.getElementById('port').value.trim(),
-            username: document.getElementById('username').value.trim(),
-            password: document.getElementById('password').value.trim()
-        });
-        
         // 正确编码 URL 参数（处理中文）
         const buildConfigUrl = (origin, values) => {
             const params = new URLSearchParams();
             Object.entries(values).forEach(([key, value]) => {
-                if (value) params.set(key, value);
+                if (value !== '' && value !== null && value !== undefined) {
+                    params.set(key, value);
+                }
             });
             return \`\${origin}/config?\${params.toString()}\`;
         };
@@ -595,9 +868,10 @@ function handleUIPageRequest(request) {
         // 统一导入逻辑
         const importTo = (client) => {
             const values = getFormValues();
-            
-            if (!values.server || !values.port) {
-                showMessage('⚠️ 服务器地址和端口是必填项！', 'error'); return;
+          
+            // ✅ 使用统一的验证函数
+            if (!validateForm(values)) {
+                return;
             }
             if (isNaN(parseInt(values.port)) || parseInt(values.port) < 1 || parseInt(values.port) > 65535) {
                 showMessage('⚠️ 端口号必须在 1-65535 范围内！', 'error'); return;
@@ -606,7 +880,7 @@ function handleUIPageRequest(request) {
             try {
                 // 两个客户端都使用同一个配置文件 URL
                 const configUrl = buildConfigUrl(location.origin, values);
-                let protocolLink, linkText;
+                let protocolLink, linkText, warningText = '';
 
                 if (client === 'clash') {
                     protocolLink = generateClashLink(configUrl);
@@ -614,23 +888,65 @@ function handleUIPageRequest(request) {
                 } else if (client === 'shadowrocket') {
                     protocolLink = generateShadowrocketSubLink(configUrl);
                     linkText = '正在生成 Shadowrocket 订阅并拉起客户端...';
+                    
+                    // 为 Shadowrocket 链式代理添加详细说明（使用字符串拼接）
+                    if (document.getElementById('use-transit-toggle').checked) {
+                        const transitName = values.transit_name || '中转节点';
+                        const landingName = values.name || '落地节点';
+                        
+                        warningText = '' +
+                            '<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 12px; padding: 20px; margin-top: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.2);">' +
+                                '<div style="display: flex; align-items: center; margin-bottom: 15px;">' +
+                                    '<span style="font-size: 24px; margin-right: 10px;">📱</span>' +
+                                    '<strong style="font-size: 18px;">Shadowrocket 链式代理设置指南</strong>' +
+                                '</div>' +
+                                
+                                '<div style="background: rgba(255,255,255,0.15); border-radius: 8px; padding: 15px; margin-bottom: 15px;">' +
+                                    '<p style="margin: 0; font-size: 14px; opacity: 0.9;">' +
+                                        '⚠️ <strong>重要：</strong>Shadowrocket 无法通过配置文件自动实现链式代理<br>' +
+                                        '需要在客户端中手动设置"代理通过"功能' +
+                                    '</p>' +
+                                '</div>' +
+                                
+                                '<div style="font-size: 15px; line-height: 1.6;">' +
+                                    '<p style="margin: 10px 0; font-weight: 600;">🔧 设置步骤：</p>' +
+                                    '<div style="background: rgba(255,255,255,0.1); border-radius: 6px; padding: 12px; font-family: monospace;">' +
+                                        '1️⃣ 导入配置后，你会看到两个独立节点<br>' +
+                                        '2️⃣ 点击落地节点 <code style="background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px;">' + landingName + '</code> 后面的ⓘ <br>' +
+                                        '3️⃣ 找到 <strong>"代理通过"</strong> 选项<br>' +
+                                        '4️⃣ 选择 <code style="background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px;">' + transitName + '</code> 作为上游代理<br>' +
+                                        '5️⃣ 点击 <strong>"完成"</strong> 保存设置' +
+                                    '</div>' +
+                                    
+                                    '<p style="margin: 15px 0 5px 0; font-weight: 600;">🎯 使用链式代理：</p>' +
+                                    '<div style="background: rgba(46, 204, 113, 0.2); border: 1px solid rgba(46, 204, 113, 0.4); border-radius: 6px; padding: 10px; font-size: 14px;">' +
+                                        '在主界面选择 <strong>' + landingName + '</strong> 节点<br>' +
+                                        '流量路径：<span style="font-family: monospace;">设备 → ' + transitName + ' → ' + landingName + ' → 目标网站</span>' +
+                                    '</div>' +
+                                    
+                                    '<p style="margin: 10px 0 0 0; font-size: 13px; opacity: 0.8;">' +
+                                        '💡 提示：Clash 用户无需手动设置，已自动实现链式代理' +
+                                    '</p>' +
+                                '</div>' +
+                            '</div>';
+                    }
                 } else {
                     showMessage('❌ 不支持的客户端类型', 'error'); return;
                 }
                 
-                // [修改] 统一显示订阅链接
-                document.getElementById('result').innerHTML = \`
-                    <div class="success">\${linkText}</div>
-                    <p style="font-size: 13px; color: #666; margin-top: 10px;">
-                        如果没有自动拉起，请复制下方通用订阅链接手动导入：
-                    </p>
-                    <div class="link-display">\${configUrl}</div>
-                    <div class="copy-buttons">
-                        <button class="btn btn-copy btn-small" onclick="copyToClipboard('\${configUrl}')">
-                            📋 复制通用订阅链接
-                        </button>
-                    </div>
-                \`;
+                // [修改] 显示订阅链接和警告信息
+                document.getElementById('result').innerHTML = 
+                    '<div class="success">' + linkText + '</div>' +
+                    '<p style="font-size: 13px; color: #666; margin-top: 10px;">' +
+                        '如果没有自动拉起，请复制下方通用订阅链接手动导入：' +
+                    '</p>' +
+                    '<div class="link-display">' + configUrl + '</div>' +
+                    '<div class="copy-buttons">' +
+                        '<button class="btn btn-copy btn-small" onclick="copyToClipboard(&quot;' + configUrl + '&quot;)">' +
+                            '📋 复制通用订阅链接' +
+                        '</button>' +
+                    '</div>' +
+                    warningText;
                 
                 // 尝试拉起客户端
                 window.location.href = protocolLink;
